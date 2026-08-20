@@ -37,6 +37,7 @@
 #include "servers/rendering/renderer_rd/environment/sky.h"
 #include "servers/rendering/renderer_rd/pipeline_deferred_rd.h"
 #include "servers/rendering/renderer_rd/shaders/environment/gi.glsl.gen.h"
+#include "servers/rendering/renderer_rd/shaders/environment/lumos_hzb.glsl.gen.h"
 #include "servers/rendering/renderer_rd/shaders/environment/sdfgi_debug.glsl.gen.h"
 #include "servers/rendering/renderer_rd/shaders/environment/sdfgi_debug_probes.glsl.gen.h"
 #include "servers/rendering/renderer_rd/shaders/environment/sdfgi_direct_light.glsl.gen.h"
@@ -263,6 +264,28 @@ private:
 	PipelineCacheRD voxel_gi_debug_shader_version_pipelines[VOXEL_GI_DEBUG_MAX];
 	RID voxel_gi_debug_uniform_set;
 
+	/* LUMOS */
+
+	struct LumosShader {
+		enum HZBMode {
+			HZB_MODE_INITIALIZE,
+			HZB_MODE_REDUCE,
+			HZB_MODE_MAX
+		};
+
+		struct HZBPushConstant {
+			int32_t src_size[2];
+			int32_t dst_size[2];
+		};
+
+		LumosHzbShaderRD hzb;
+
+		RID hzb_shader;
+		PipelineDeferredRD hzb_pipeline[HZB_MODE_MAX];
+	};
+
+	LumosShader lumos_shader;
+
 	/* SDFGI */
 
 	struct SDFGIShader {
@@ -468,6 +491,15 @@ public:
 
 		RID uniform_set[RendererSceneRender::MAX_RENDER_VIEWS];
 		RID scene_data_ubo;
+
+		/* Lumos */
+
+		RID lumos_hzb[RendererSceneRender::MAX_RENDER_VIEWS];
+
+		Vector<RID> lumos_hzb_mip_views[RendererSceneRender::MAX_RENDER_VIEWS];
+
+		Size2i lumos_hzb_size;
+		uint32_t lumos_hzb_mip_count = 0;
 
 		RID get_voxel_gi_buffer();
 
@@ -836,6 +868,11 @@ public:
 	Ref<SDFGI> create_sdfgi(RID p_env, const Vector3 &p_world_position, uint32_t p_requested_history_size);
 
 	void setup_voxel_gi_instances(RenderDataRD *p_render_data, Ref<RenderSceneBuffersRD> p_render_buffers, const Transform3D &p_transform, const PagedArray<RID> &p_voxel_gi_instances, uint32_t &r_voxel_gi_instances_used);
+
+	void lumos_hzb_create(Ref<RenderSceneBuffersRD> p_render_buffers, RenderBuffersGI *p_rbgi, uint32_t p_view_count);
+	void lumos_hzb_process(Ref<RenderSceneBuffersRD> p_render_buffers, RenderBuffersGI *p_rbgi, uint32_t p_view_count);
+	void lumos_hzb_free(RenderBuffersGI *p_rbgi);
+
 	void process_gi(Ref<RenderSceneBuffersRD> p_render_buffers, const RID *p_normal_roughness_slices, RID p_voxel_gi_buffer, RID p_environment, uint32_t p_view_count, const Projection *p_projections, const Vector3 *p_eye_offsets, const Transform3D &p_cam_transform, const PagedArray<RID> &p_voxel_gi_instances);
 
 	RID voxel_gi_instance_create(RID p_base);

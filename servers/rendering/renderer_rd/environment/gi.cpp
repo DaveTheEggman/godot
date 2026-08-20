@@ -3538,6 +3538,10 @@ GI::~GI() {
 		sdfgi_shader.preprocess_pipeline[i].free();
 	}
 
+	for (int i = 0; i < LumosShader::HZB_MODE_MAX; i++) {
+		lumos_shader.hzb_pipeline[i].free();
+	}
+
 	for (int i = 0; i < VOXEL_GI_SHADER_VERSION_MAX; i++) {
 		voxel_gi_lighting_shader_version_pipelines[i].free();
 	}
@@ -3565,6 +3569,9 @@ GI::~GI() {
 	}
 	if (sdfgi_shader.preprocess_shader.is_valid()) {
 		sdfgi_shader.preprocess.version_free(sdfgi_shader.preprocess_shader);
+	}
+	if (lumos_shader.hzb_shader.is_valid()) {
+		lumos_shader.hzb.version_free(lumos_shader.hzb_shader);
 	}
 
 	singleton = nullptr;
@@ -3624,6 +3631,21 @@ void GI::init(SkyRD *p_sky) {
 			ds.depth_compare_operator = RD::COMPARE_OP_GREATER_OR_EQUAL;
 
 			voxel_gi_debug_shader_version_pipelines[i].setup(voxel_gi_debug_shader_version_shaders[i], RD::RENDER_PRIMITIVE_TRIANGLES, rs, RD::PipelineMultisampleState(), ds, RD::PipelineColorBlendState::create_disabled(), 0);
+		}
+	}
+
+	/* LUMOS */
+
+	{
+		Vector<String> hzb_modes;
+		hzb_modes.push_back("\n#define MODE_INITIALIZE\n");
+		hzb_modes.push_back("\n#define MODE_REDUCE\n");
+
+		lumos_shader.hzb.initialize(hzb_modes, String());
+		lumos_shader.hzb_shader = lumos_shader.hzb.version_create();
+
+		for (int i = 0; i < LumosShader::HZB_MODE_MAX; i++) {
+			lumos_shader.hzb_pipeline[i].create_compute_pipeline(lumos_shader.hzb.version_get_shader(lumos_shader.hzb_shader, i));
 		}
 	}
 
@@ -3946,6 +3968,78 @@ RID GI::RenderBuffersGI::get_voxel_gi_buffer() {
 	return voxel_gi_buffer;
 }
 
+void GI::lumos_hzb_create(Ref<RenderSceneBuffersRD> p_render_buffers, RenderBuffersGI *p_rbgi, uint32_t p_view_count) {
+	ERR_FAIL_COND(p_render_buffers.is_null());
+	ERR_FAIL_NULL(p_rbgi);
+	ERR_FAIL_COND(p_view_count > RendererSceneRender::MAX_RENDER_VIEWS); // TODO: Add a error message?
+
+	Size2i internal_size = p_render_buffers->get_internal_size();
+
+	if (internal_size.x <= 0 || internal_size.y <= 0) {
+		return;
+	}
+
+	uint32_t mip_count = 1;
+	Size2i mip_size = internal_size;
+
+	while (mip_size.x > 1 || mip_size.y > 1) {
+		mip_size.x = MAX(1, (mip_size.x + 1) >> 1);
+		mip_size.y = MAX(1, (mip_size.y + 1) >> 1);
+		mip_count++;
+	}
+
+	if (p_rbgi->lumos_hzb[0].is_valid() && p_rbgi->lumos_hzb_size == internal_size && p_rbgi->lumos_hzb_mip_count == mip_count) {
+		return;
+	}
+
+	lumos_hzb_free(p_rbgi);
+
+	RD::TextureFormat format;
+	format.width = internal_size.x;
+	format.height = internal_size.y;
+	format.format = RD::DATA_FORMAT_R32_SFLOAT;
+	format.mipmaps = mip_count;
+	format.texture_type = RD::TEXTURE_TYPE_2D;
+	format.usage_bits = RD::TEXTURE_USAGE_SAMPLING_BIT | RD::TEXTURE_USAGE_STORAGE_BIT;
+
+	for (uint32_t v = 0; v < p_view_count; v++) {
+		p_rbgi->lumos_hzb[v] = RD::get_singleton()->texture_create(format, RD::TextureView());
+		ERR_FAIL_COND(p_rbgi->lumos_hzb[v].is_null());
+		RD::get_singleton()->set_resource_name(p_rbgi->lumos_hzb[v], "Lumos HZB View " + itos(v));
+
+		p_rbgi->lumos_hzb_mip_views[v].resize(mip_count);
+		for (uint32_t i = 0; i < mip_count; i++) {
+			p_rbgi->lumos_hzb_mip_views[v].write[i] = RD::get_singleton()->texture_create_shared_from_slice(RD::TextureView(), p_rbgi->lumos_hzb[v], 0, i, 1, RD::TEXTURE_SLICE_2D);
+		}
+	}
+
+	p_rbgi->lumos_hzb_size = internal_size;
+	p_rbgi->lumos_hzb_mip_count = mip_count;
+}
+
+void GI::lumos_hzb_free(RenderBuffersGI *p_rbgi) {
+	if (p_rbgi == nullptr) {
+		return;
+	}
+
+	for (uint32_t v = 0; v < RendererSceneRender::MAX_RENDER_VIEWS; v++) {
+		for (int i = 0; i < p_rbgi->lumos_hzb_mip_views[v].size(); i++) {
+			if (p_rbgi->lumos_hzb_mip_views[v][i].is_valid()) {
+				RD::get_singleton()->free_rid(p_rbgi->lumos_hzb_mip_views[v][i]);
+			}
+		}
+		p_rbgi->lumos_hzb_mip_views[v].clear();
+
+		if (p_rbgi->lumos_hzb[v].is_valid()) {
+			RD::get_singleton()->free_rid(p_rbgi->lumos_hzb[v]);
+			p_rbgi->lumos_hzb[v] = RID();
+		}
+	}
+
+	p_rbgi->lumos_hzb_size = Size2i();
+	p_rbgi->lumos_hzb_mip_count = 0;
+}
+
 void GI::RenderBuffersGI::free_data() {
 	for (uint32_t v = 0; v < RendererSceneRender::MAX_RENDER_VIEWS; v++) {
 		if (RD::get_singleton()->uniform_set_is_valid(uniform_set[v])) {
@@ -3963,6 +4057,83 @@ void GI::RenderBuffersGI::free_data() {
 		RD::get_singleton()->free_rid(voxel_gi_buffer);
 		voxel_gi_buffer = RID();
 	}
+
+	GI::get_singleton()->lumos_hzb_free(this);
+}
+
+void GI::lumos_hzb_process(Ref<RenderSceneBuffersRD> p_render_buffers, RenderBuffersGI *p_rbgi, uint32_t p_view_count) {
+	ERR_FAIL_COND(p_render_buffers.is_null());
+	ERR_FAIL_NULL(p_rbgi);
+
+	if (p_rbgi->lumos_hzb_mip_count == 0) {
+		return;
+	}
+
+	RendererRD::MaterialStorage *material_storage = RendererRD::MaterialStorage::get_singleton();
+	RID point_sampler = material_storage->sampler_rd_get_default(RSE::CANVAS_ITEM_TEXTURE_FILTER_NEAREST, RSE::CANVAS_ITEM_TEXTURE_REPEAT_DISABLED);
+
+	RD::get_singleton()->draw_command_begin_label("Lumos HZB Build");
+
+	RD::ComputeListID compute_list = RD::get_singleton()->compute_list_begin();
+
+	Size2i src_size = p_rbgi->lumos_hzb_size;
+
+	for (uint32_t v = 0; v < p_view_count; v++) {
+		if (p_rbgi->lumos_hzb[v].is_null()) {
+			continue;
+		}
+
+		RID depth_texture = p_render_buffers->get_depth_texture(v);
+		ERR_CONTINUE(depth_texture.is_null());
+
+		for (uint32_t mip = 0; mip < p_rbgi->lumos_hzb_mip_count; mip++) {
+			Size2i dst_size = Size2i(MAX(1, src_size.x >> mip), MAX(1, src_size.y >> mip));
+			Size2i read_size = (mip == 0) ? src_size : Size2i(MAX(1, src_size.x >> (mip - 1)), MAX(1, src_size.y >> (mip - 1)));
+
+			LocalVector<RD::Uniform> uniforms;
+			{
+				RD::Uniform u;
+				u.uniform_type = RD::UNIFORM_TYPE_SAMPLER;
+				u.binding = 0;
+				u.append_id(point_sampler);
+				uniforms.push_back(u);
+			}
+			{
+				RD::Uniform u;
+				u.uniform_type = RD::UNIFORM_TYPE_TEXTURE;
+				u.binding = 1;
+				u.append_id(mip == 0 ? depth_texture : p_rbgi->lumos_hzb_mip_views[v][mip - 1]);
+				uniforms.push_back(u);
+			}
+			{
+				RD::Uniform u;
+				u.uniform_type = RD::UNIFORM_TYPE_IMAGE;
+				u.binding = 2;
+				u.append_id(p_rbgi->lumos_hzb_mip_views[v][mip]);
+				uniforms.push_back(u);
+			}
+
+			LumosShader::HZBMode mode = (mip == 0) ? LumosShader::HZB_MODE_INITIALIZE : LumosShader::HZB_MODE_REDUCE;
+			RID hzb_shader_rid = lumos_shader.hzb.version_get_shader(lumos_shader.hzb_shader, mode);
+			RID uniform_set = UniformSetCacheRD::get_singleton()->get_cache_vec(hzb_shader_rid, 0, uniforms);
+
+			LumosShader::HZBPushConstant push_constant;
+			push_constant.src_size[0] = read_size.x;
+			push_constant.src_size[1] = read_size.y;
+			push_constant.dst_size[0] = dst_size.x;
+			push_constant.dst_size[1] = dst_size.y;
+
+			RD::get_singleton()->compute_list_bind_compute_pipeline(compute_list, lumos_shader.hzb_pipeline[mode].get_rid());
+			RD::get_singleton()->compute_list_bind_uniform_set(compute_list, uniform_set, 0);
+			RD::get_singleton()->compute_list_set_push_constant(compute_list, &push_constant, sizeof(LumosShader::HZBPushConstant));
+			RD::get_singleton()->compute_list_dispatch_threads(compute_list, dst_size.x, dst_size.y, 1);
+			RD::get_singleton()->compute_list_add_barrier(compute_list);
+		}
+	}
+
+	RD::get_singleton()->compute_list_end();
+
+	RD::get_singleton()->draw_command_end_label();
 }
 
 void GI::process_gi(Ref<RenderSceneBuffersRD> p_render_buffers, const RID *p_normal_roughness_slices, RID p_voxel_gi_buffer, RID p_environment, uint32_t p_view_count, const Projection *p_projections, const Vector3 *p_eye_offsets, const Transform3D &p_cam_transform, const PagedArray<RID> &p_voxel_gi_instances) {
@@ -3979,6 +4150,10 @@ void GI::process_gi(Ref<RenderSceneBuffersRD> p_render_buffers, const RID *p_nor
 	ERR_FAIL_COND(rbgi.is_null());
 
 	Size2i internal_size = p_render_buffers->get_internal_size();
+
+	// Lumos HZB
+	lumos_hzb_create(p_render_buffers, rbgi.ptr(), p_view_count);
+	lumos_hzb_process(p_render_buffers, rbgi.ptr(), p_view_count);
 
 	if (rbgi->using_half_size_gi != half_resolution) {
 		p_render_buffers->clear_context(RB_SCOPE_GI);
