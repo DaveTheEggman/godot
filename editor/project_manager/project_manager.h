@@ -46,6 +46,7 @@ class PanelContainer;
 class PopupMenu;
 class ProjectDialog;
 class ProjectList;
+class ProjectManagerNews;
 class QuickSettingsDialog;
 class RichTextLabel;
 class TabContainer;
@@ -101,6 +102,7 @@ class ProjectManager : public Control {
 	enum MainViewTab {
 		MAIN_VIEW_PROJECTS,
 		MAIN_VIEW_ASSETLIB,
+		MAIN_VIEW_NEWS,
 		MAIN_VIEW_MAX
 	};
 
@@ -117,11 +119,13 @@ class ProjectManager : public Control {
 
 	VBoxContainer *local_projects_vb = nullptr;
 	EditorAssetLibrary *asset_library = nullptr;
+	ProjectManagerNews *news = nullptr;
 
 	EditorAbout *about_dialog = nullptr;
 
 	void _show_about();
 	void _open_asset_library_confirmed();
+	void _open_news_confirmed();
 	void _project_list_menu_option(int p_option);
 
 	AcceptDialog *error_dialog = nullptr;
