@@ -3721,6 +3721,14 @@ void FileSystemDock::_add_create_options(PopupMenu *p_popup, const String &p_bas
 	p_popup->set_item_shortcut(-1, ED_GET_SHORTCUT("filesystem_dock/new_resource"));
 	p_popup->add_icon_item(get_editor_theme_icon(SNAME("TextFile")), prefix_new ? TTRC("New TextFile...") : TTRC("TextFile..."), FILE_MENU_NEW_TEXTFILE);
 	p_popup->set_item_shortcut(-1, ED_GET_SHORTCUT("filesystem_dock/new_textfile"));
+
+#if !defined(ANDROID_ENABLED) && !defined(WEB_ENABLED)
+	// Opening the system file manager is not supported on the Android and web editors.
+	tree_popup->add_separator();
+	tree_popup->add_icon_shortcut(get_editor_theme_icon(SNAME("Terminal")), ED_GET_SHORTCUT("filesystem_dock/open_in_terminal"), FILE_MENU_OPEN_IN_TERMINAL);
+	tree_popup->add_icon_shortcut(get_editor_theme_icon(SNAME("Filesystem")), ED_GET_SHORTCUT("filesystem_dock/show_in_explorer"), FILE_MENU_SHOW_IN_EXPLORER);
+#endif
+
 	// Options for CONTEXT_SLOT_FILESYSTEM_CREATE are added with an offset, to avoid conflicts in case plugins add options for both FileSystem slots.
 	if (EditorContextMenuPluginManager::get_singleton()->has_plugins_for_slot(EditorContextMenuPlugin::CONTEXT_SLOT_FILESYSTEM_CREATE)) {
 		const String base_directory = prefix_new ? "res://" : p_base_folder;
