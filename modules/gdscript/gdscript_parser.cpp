@@ -4787,6 +4787,13 @@ bool GDScriptParser::export_annotations(AnnotationNode *p_annotation, Node *p_ta
 	} else if (p_annotation->name == SNAME("@export")) {
 		use_default_variable_type_check = false;
 
+		if (p_class->outer != nullptr) {
+#ifdef DEBUG_ENABLED
+			push_warning(p_annotation, GDScriptWarning::EXPORT_IN_INNER_CLASS, {});
+#endif // DEBUG_ENABLED
+			return false;
+		}
+
 		if (variable->datatype_specifier == nullptr && variable->initializer == nullptr) {
 			push_error(R"(Cannot use simple "@export" annotation with variable without type or initializer, since type can't be inferred.)", p_annotation);
 			return false;

@@ -1,0 +1,3 @@
+GDTEST_OK
+~~ WARNING at line 6: (EXPORT_IN_INNER_CLASS) "@export" is not supported in inner classes.
+warn
